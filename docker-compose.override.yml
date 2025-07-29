@@ -1,0 +1,81 @@
+# Docker Compose override for local development
+# This file is automatically loaded by docker-compose and overrides/extends docker-compose.yml
+
+services:
+  wingtip-app:
+    build:
+      target: runtime  # Use runtime stage for faster builds during development
+    environment:
+      - ASPNET_ENVIRONMENT=Development
+      - ELMAH_LOG_LEVEL=Debug
+    volumes:
+      # Mount source code for easier debugging (Windows only)
+      - ./WingtipToys/WingtipToys/App_Data:/inetpub/wwwroot/App_Data
+    # Enable debugging port if needed
+    # ports:
+    #   - "8080:80"
+    #   - "4022:4022"  # Remote debugging port
+
+  sql-server:
+    environment:
+      - SA_PASSWORD=DevPassword123!
+    ports:
+      - "1434:1433"  # Use different port for dev to avoid conflicts
+    volumes:
+      - sql-dev-data:/var/opt/mssql
+      - ./database/dev-init:/docker-entrypoint-initdb.d
+
+  # Add Adminer for database management in development
+  adminer:
+    image: adminer:latest
+    ports:
+      - "8081:8080"
+    networks:
+      - wingtip-network
+    restart: unless-stopped
+    environment:
+      - ADMINER_DEFAULT_SERVER=sql-server
+      - ADMINER_DESIGN=hydra
+
+  # Add Redis for session state (optional enhancement)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - wingtip-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+
+  # Add Elasticsearch for logging (optional enhancement)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    networks:
+      - wingtip-network
+    volumes:
+      - elastic-data:/usr/share/elasticsearch/data
+
+  # Add Kibana for log visualization (optional enhancement)
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - wingtip-network
+    depends_on:
+      - elasticsearch
+
+volumes:
+  sql-dev-data:
+  redis-data:
+  elastic-data: 

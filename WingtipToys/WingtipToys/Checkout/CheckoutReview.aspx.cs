@@ -76,7 +76,7 @@ namespace WingtipToys.Checkout
               myOrderDetail.Username = User.Identity.Name;
               myOrderDetail.ProductId = myOrderList[i].ProductId;
               myOrderDetail.Quantity = myOrderList[i].Quantity;
-              myOrderDetail.UnitPrice = myOrderList[i].Product.UnitPrice;
+              myOrderDetail.UnitPrice = Convert.ToDecimal(myOrderList[i].Product.UnitPrice ?? 0.0);
 
               // Add OrderDetail to DB.
               _db.OrderDetails.Add(myOrderDetail);

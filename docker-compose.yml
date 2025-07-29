@@ -1,0 +1,65 @@
+services:
+  # WingtipToys Web Application
+  wingtip-app:
+    build:
+      context: .
+      dockerfile: WingtipToys/WingtipToys/Dockerfile
+    ports:
+      - "8080:80"
+    environment:
+      - ASPNET_ENVIRONMENT=Development
+      - ConnectionStrings__WingtipToys=Server=sql-server,1433;Database=WingtipToysDB;User Id=sa;Password=YourPassword123!;TrustServerCertificate=true;
+    depends_on:
+      - sql-server
+    networks:
+      - wingtip-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "powershell", "-command", "try { Invoke-WebRequest -Uri http://localhost -UseBasicParsing -TimeoutSec 3 | Out-Null; exit 0 } catch { exit 1 }"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # SQL Server Database
+  sql-server:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    ports:
+      - "1433:1433"
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourPassword123!
+      - MSSQL_PID=Express
+    volumes:
+      - sql-data:/var/opt/mssql
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - wingtip-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P YourPassword123! -Q 'SELECT 1' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # SQL Server Management Studio (Optional - for development)
+  # Uncomment if you need a web-based SQL management interface
+  # adminer:
+  #   image: adminer:latest
+  #   ports:
+  #     - "8081:8080"
+  #   networks:
+  #     - wingtip-network
+  #   restart: unless-stopped
+
+networks:
+  wingtip-network:
+    driver: bridge
+
+volumes:
+  sql-data:
+    driver: local
+
+# Development override file
+# Create docker-compose.override.yml for local development settings 

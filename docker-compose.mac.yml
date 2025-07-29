@@ -1,0 +1,85 @@
+services:
+  # SQL Server Database - Works on Mac via Linux containers
+  sql-server:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    ports:
+      - "1433:1433"
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourPassword123!
+      - MSSQL_PID=Express
+    volumes:
+      - sql-data:/var/opt/mssql
+    networks:
+      - wingtip-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P YourPassword123! -Q 'SELECT 1' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Database Management Interface
+  adminer:
+    image: adminer:latest
+    ports:
+      - "8081:8080"
+    networks:
+      - wingtip-network
+    restart: unless-stopped
+    environment:
+      - ADMINER_DEFAULT_SERVER=sql-server
+      - ADMINER_DESIGN=hydra
+
+  # Redis for session state (if implementing caching)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - wingtip-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+
+  # Elasticsearch for logging (optional)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    networks:
+      - wingtip-network
+    volumes:
+      - elastic-data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+
+  # Kibana for log visualization (optional)
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - wingtip-network
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+networks:
+  wingtip-network:
+    driver: bridge
+
+volumes:
+  sql-data:
+    driver: local
+  redis-data:
+    driver: local
+  elastic-data:
+    driver: local 

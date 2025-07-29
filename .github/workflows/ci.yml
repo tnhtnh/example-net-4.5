@@ -1,0 +1,195 @@
+name: CI
+
+on:
+  push:
+    branches: 
+      - '*'
+  pull_request:
+    branches: 
+      - 'main'
+
+env:
+  DOTNET_VERSION: '8.0.x'  # For test projects that may use modern .NET
+  SOLUTION_PATH: 'WingtipToys/WingtipToys.sln'
+  TEST_PROJECT_PATH: 'WingtipToys.Tests/WingtipToys.Tests.csproj'
+
+jobs:
+  # Test the business logic (tests can run on modern .NET even if main app is .NET Framework)
+  test:
+    name: Run Tests
+    runs-on: windows-latest
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v1
+
+    - name: Cache NuGet packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.config') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
+    - name: Restore solution packages
+      run: nuget restore ${{ env.SOLUTION_PATH }}
+
+    - name: Restore test project dependencies
+      run: dotnet restore ${{ env.TEST_PROJECT_PATH }}
+
+    - name: Build solution
+      run: msbuild ${{ env.SOLUTION_PATH }} /p:Configuration=Release /p:Platform="Any CPU"
+
+    - name: Build test project
+      run: dotnet build ${{ env.TEST_PROJECT_PATH }} --no-restore --configuration Release
+
+    - name: Run unit tests
+      run: dotnet test ${{ env.TEST_PROJECT_PATH }} --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage --logger trx
+
+    - name: Generate test report
+      uses: dorny/test-reporter@v2
+      if: success() || failure()
+      with:
+        name: Test Results
+        path: '**/*.trx'
+        reporter: dotnet-trx
+        fail-on-error: true
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        directory: ./coverage
+        fail_ci_if_error: false
+
+  # Build the .NET Framework 4.5 application
+  build:
+    name: Build .NET Framework App
+    runs-on: windows-latest
+    needs: test
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v1
+
+    - name: Cache NuGet packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.config') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
+    - name: Restore NuGet packages
+      run: nuget restore ${{ env.SOLUTION_PATH }}
+
+    - name: Build solution
+      run: msbuild ${{ env.SOLUTION_PATH }} /p:Configuration=Release /p:Platform="Any CPU" /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true
+
+    - name: Archive build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: wingtip-toys-build
+        path: |
+          WingtipToys/WingtipToys/bin/
+          WingtipToys/WingtipToys/obj/Release/Package/
+        retention-days: 30
+
+  # Build Docker image (Windows containers for .NET Framework)
+  docker-build:
+    name: Build Docker Image
+    runs-on: windows-latest
+    needs: [test, build]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: |
+          wingtiptoys/app
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./WingtipToys/WingtipToys/Dockerfile
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: windows/amd64
+
+    - name: Test Docker image
+      run: |
+        docker run --rm --name wingtip-test -d -p 8080:80 wingtiptoys/app:latest
+        Start-Sleep 30
+        try { Invoke-WebRequest -Uri http://localhost:8080 -UseBasicParsing } catch { exit 1 }
+        docker stop wingtip-test
+
+
+  # Deploy to staging (only on main branch)
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy
+      run: |
+        echo "Deploying to staging"
+
+  # Deploy to production (only with manual approval)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy
+      run: |
+        echo "Deploying to production"
