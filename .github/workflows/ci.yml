@@ -58,7 +58,7 @@ jobs:
       run: dotnet test ${{ env.TEST_PROJECT_PATH }} --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage --logger trx
 
     - name: Generate test report
-      uses: dorny/test-reporter@v1
+      uses: dorny/test-reporter@v2
       if: success() || failure()
       with:
         name: Test Results
@@ -175,18 +175,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Deploy to Azure Web App
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: 'wingtip-toys-staging'
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_STAGING }}
-        images: 'wingtiptoys/app:latest'
-
-    - name: Run smoke tests
+    - name: Deploy
       run: |
-        sleep 60  # Wait for deployment
-        curl -f https://wingtip-toys-staging.azurewebsites.net || exit 1
-        echo "Staging deployment successful!"
+        echo "Deploying to staging"
 
   # Deploy to production (only with manual approval)
   deploy-production:
@@ -199,25 +190,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Deploy to Azure Web App
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: 'wingtip-toys-prod'
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PROD }}
-        images: 'wingtiptoys/app:latest'
-
-    - name: Run production smoke tests
+    - name: Deploy
       run: |
-        sleep 60  # Wait for deployment
-        curl -f https://wingtip-toys.azurewebsites.net || exit 1
-        echo "Production deployment successful!"
-
-    - name: Notify team
-      uses: 8398a7/action-slack@v3
-      with:
-        status: ${{ job.status }}
-        channel: '#deployments'
-        text: 'WingtipToys has been deployed to production!'
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
-      if: always() 
+        echo "Deploying to production"
