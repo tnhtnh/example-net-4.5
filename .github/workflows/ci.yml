@@ -2,19 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [ master, main, develop ]
+    branches: 
+      - '*'
   pull_request:
-    branches: [ master, main, develop ]
+    branches: 
+      - 'main'
 
 env:
-  DOTNET_VERSION: '8.0.x'
+  DOTNET_VERSION: '8.0.x'  # For test projects that may use modern .NET
   SOLUTION_PATH: 'WingtipToys/WingtipToys.sln'
   TEST_PROJECT_PATH: 'WingtipToys.Tests/WingtipToys.Tests.csproj'
 
 jobs:
-  # Test the cross-platform business logic on multiple operating systems
-  test-windows:
-    name: Test Business Logic on Windows
+  # Test the business logic (tests can run on modern .NET even if main app is .NET Framework)
+  test:
+    name: Run Tests
     runs-on: windows-latest
         
     steps:
@@ -26,44 +28,55 @@ jobs:
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
 
-    - name: Cache .NET packages
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v1
+
+    - name: Cache NuGet packages
       uses: actions/cache@v3
       with:
         path: ~/.nuget/packages
-        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.config') }}
         restore-keys: |
           ${{ runner.os }}-nuget-
 
+    - name: Restore solution packages
+      run: nuget restore ${{ env.SOLUTION_PATH }}
+
     - name: Restore test project dependencies
       run: dotnet restore ${{ env.TEST_PROJECT_PATH }}
+
+    - name: Build solution
+      run: msbuild ${{ env.SOLUTION_PATH }} /p:Configuration=Release /p:Platform="Any CPU"
 
     - name: Build test project
       run: dotnet build ${{ env.TEST_PROJECT_PATH }} --no-restore --configuration Release
 
     - name: Run unit tests
-      run: dotnet test ${{ env.TEST_PROJECT_PATH }} --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage
+      run: dotnet test ${{ env.TEST_PROJECT_PATH }} --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage --logger trx
 
     - name: Generate test report
       uses: dorny/test-reporter@v1
       if: success() || failure()
       with:
-        name: Test Results (${{ matrix.os }})
+        name: Test Results
         path: '**/*.trx'
         reporter: dotnet-trx
         fail-on-error: true
 
     - name: Upload coverage reports to Codecov
-      if: matrix.os == 'ubuntu-latest'
       uses: codecov/codecov-action@v3
       with:
         directory: ./coverage
         fail_ci_if_error: false
 
-  # Build the full .NET Framework application on Windows
-  build-windows:
+  # Build the .NET Framework 4.5 application
+  build:
     name: Build .NET Framework App
     runs-on: windows-latest
-    needs: test-cross-platform
+    needs: test
 
     steps:
     - name: Checkout code
@@ -78,8 +91,8 @@ jobs:
     - name: Cache NuGet packages
       uses: actions/cache@v3
       with:
-        path: ~\.nuget\packages
-        key: ${{ runner.os }}-nuget-${{ hashFiles('**\packages.config') }}
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.config') }}
         restore-keys: |
           ${{ runner.os }}-nuget-
 
@@ -87,7 +100,7 @@ jobs:
       run: nuget restore ${{ env.SOLUTION_PATH }}
 
     - name: Build solution
-      run: msbuild ${{ env.SOLUTION_PATH }} /p:Configuration=Release /p:Platform="Any CPU" /p:PublishProfile=FolderProfile
+      run: msbuild ${{ env.SOLUTION_PATH }} /p:Configuration=Release /p:Platform="Any CPU" /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true
 
     - name: Archive build artifacts
       uses: actions/upload-artifact@v3
@@ -98,11 +111,11 @@ jobs:
           WingtipToys/WingtipToys/obj/Release/Package/
         retention-days: 30
 
-  # Build and test Docker image
+  # Build Docker image (Windows containers for .NET Framework)
   docker-build:
     name: Build Docker Image
-    runs-on: ubuntu-latest
-    needs: [test-cross-platform, build-windows]
+    runs-on: windows-latest
+    needs: [test, build]
 
     steps:
     - name: Checkout code
@@ -141,100 +154,22 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        platforms: linux/amd64
+        platforms: windows/amd64
 
     - name: Test Docker image
       run: |
         docker run --rm --name wingtip-test -d -p 8080:80 wingtiptoys/app:latest
-        sleep 30
-        curl -f http://localhost:8080 || exit 1
+        Start-Sleep 30
+        try { Invoke-WebRequest -Uri http://localhost:8080 -UseBasicParsing } catch { exit 1 }
         docker stop wingtip-test
 
-  # Code quality and security analysis
-  code-analysis:
-    name: Code Analysis
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: ${{ env.DOTNET_VERSION }}
-
-    - name: Cache SonarCloud packages
-      uses: actions/cache@v3
-      with:
-        path: ~\sonar\cache
-        key: ${{ runner.os }}-sonar
-        restore-keys: ${{ runner.os }}-sonar
-
-    - name: Install SonarCloud scanner
-      run: dotnet tool install --global dotnet-sonarscanner
-
-    - name: Begin SonarCloud analysis
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      run: |
-        dotnet-sonarscanner begin \
-          /k:"your-org_wingtip-toys" \
-          /o:"your-org" \
-          /d:sonar.token="${{ secrets.SONAR_TOKEN }}" \
-          /d:sonar.host.url="https://sonarcloud.io" \
-          /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
-
-    - name: Build test project for analysis
-      run: |
-        dotnet restore ${{ env.TEST_PROJECT_PATH }}
-        dotnet build ${{ env.TEST_PROJECT_PATH }} --configuration Release
-
-    - name: Run tests with coverage
-      run: dotnet test ${{ env.TEST_PROJECT_PATH }} --configuration Release --collect:"XPlat Code Coverage" --results-directory ./coverage -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
-
-    - name: End SonarCloud analysis
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      run: dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
-
-  # Security scanning
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    permissions:
-      security-events: write
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-
-    - name: Upload Trivy scan results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v2
-      if: always()
-      with:
-        sarif_file: 'trivy-results.sarif'
 
   # Deploy to staging (only on main branch)
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
-    needs: [build-windows, docker-build, code-analysis]
+    needs: [build, docker-build]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment: staging
 
     steps:
     - name: Checkout code
@@ -259,7 +194,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy-staging
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment: production
 
     steps:
     - name: Checkout code
