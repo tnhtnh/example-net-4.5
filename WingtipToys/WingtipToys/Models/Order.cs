@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using System;
+using System.ComponentModel.DataAnnotations;
 using System.Collections.Generic;
 using System.ComponentModel;
 
@@ -6,10 +7,14 @@ namespace WingtipToys.Models
 {
   public class Order
   {
+    [Key]
     public int OrderId { get; set; }
 
-    public System.DateTime OrderDate { get; set; }
+    [Required]
+    public DateTime OrderDate { get; set; }
 
+    [Required]
+    [StringLength(256)]
     public string Username { get; set; }
 
     [Required(ErrorMessage = "First Name is required")]
@@ -49,19 +54,22 @@ namespace WingtipToys.Models
     [Required(ErrorMessage = "Email Address is required")]
     [DisplayName("Email Address")]
     [RegularExpression(@"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,4}",
-        ErrorMessage = "Email is is not valid.")]
+        ErrorMessage = "Email is not valid.")]
     [DataType(DataType.EmailAddress)]
     public string Email { get; set; }
 
     [ScaffoldColumn(false)]
+    [DataType(DataType.Currency)]
+    [Range(0, double.MaxValue, ErrorMessage = "Total must be non-negative")]
     public decimal Total { get; set; }
 
     [ScaffoldColumn(false)]
+    [StringLength(100)]
     public string PaymentTransactionId { get; set; }
 
     [ScaffoldColumn(false)]
     public bool HasBeenShipped { get; set; }
 
-    public List<OrderDetail> OrderDetails { get; set; }
+    public virtual List<OrderDetail> OrderDetails { get; set; }
   }
 }
