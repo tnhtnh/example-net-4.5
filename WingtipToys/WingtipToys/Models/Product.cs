@@ -16,7 +16,9 @@ namespace WingtipToys.Models
     public string ImagePath { get; set; }
 
     [Display(Name = "Price")]
-    public double? UnitPrice { get; set; }
+    [DataType(DataType.Currency)]
+    [Range(0.01, double.MaxValue, ErrorMessage = "Price must be greater than 0")]
+    public decimal? UnitPrice { get; set; }
 
     public int? CategoryID { get; set; }
 
